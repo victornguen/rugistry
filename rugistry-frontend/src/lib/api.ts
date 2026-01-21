@@ -118,9 +118,31 @@ export async function deleteEntry(spaceId: string, entryId: string): Promise<voi
 }
 
 // WebSocket connection
-export function connectWebSocket(spaceId: string, onMessage: (notification: ChangeNotification) => void): WebSocket {
+export interface WebSocketOptions {
+  /** Filter by exact key match */
+  key?: string;
+  /** Filter by regex pattern */
+  pattern?: string;
+}
+
+export function connectWebSocket(
+  spaceId: string, 
+  onMessage: (notification: ChangeNotification) => void,
+  options?: WebSocketOptions
+): WebSocket {
   const wsUrl = API_URL.replace('http', 'ws');
-  const ws = new WebSocket(`${wsUrl}/api/ws/${spaceId}`);
+  
+  // Build query parameters
+  const params = new URLSearchParams();
+  if (options?.key) {
+    params.append('key', options.key);
+  }
+  if (options?.pattern) {
+    params.append('pattern', options.pattern);
+  }
+  const queryString = params.toString() ? `?${params.toString()}` : '';
+  
+  const ws = new WebSocket(`${wsUrl}/api/ws/${spaceId}${queryString}`);
   
   ws.onmessage = (event) => {
     const notification: ChangeNotification = JSON.parse(event.data);
