@@ -43,7 +43,7 @@ pub struct UpdateRegistryEntryRequest {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryEntryResponse {
     pub id: Uuid,
     pub space_id: Uuid,
@@ -62,6 +62,7 @@ pub struct ChangeNotification {
     pub space_id: Uuid,
     pub entry_id: Option<Uuid>,
     pub key: Option<String>,
+    pub entry: Option<RegistryEntryResponse>,
     pub timestamp: String,
 }
 

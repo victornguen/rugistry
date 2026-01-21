@@ -34,17 +34,19 @@ impl RegistryService {
         );
         
         let created = self.repository.create(&entry).await?;
+        let response = entry_to_response(created);
         
-        // Notify subscribers
+        // Notify subscribers with full entry data
         self.event_bus.publish(ChangeNotification {
             event_type: ChangeEventType::Created,
-            space_id: created.space_id,
-            entry_id: Some(created.id),
-            key: Some(req.key),
+            space_id: response.space_id,
+            entry_id: Some(response.id),
+            key: Some(response.key.clone()),
+            entry: Some(response.clone()),
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
         
-        Ok(entry_to_response(created))
+        Ok(response)
     }
 
     pub async fn get_entry(&self, id: Uuid) -> anyhow::Result<RegistryEntryResponse> {
@@ -91,17 +93,19 @@ impl RegistryService {
         
         entry.updated_at = chrono::Utc::now();
         let updated = self.repository.update(&entry).await?;
+        let response = entry_to_response(updated);
         
-        // Notify subscribers
+        // Notify subscribers with full entry data
         self.event_bus.publish(ChangeNotification {
             event_type: ChangeEventType::Updated,
-            space_id: updated.space_id,
-            entry_id: Some(updated.id),
-            key: Some(updated.key.clone()),
+            space_id: response.space_id,
+            entry_id: Some(response.id),
+            key: Some(response.key.clone()),
+            entry: Some(response.clone()),
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
         
-        Ok(entry_to_response(updated))
+        Ok(response)
     }
 
     pub async fn delete_entry(&self, id: Uuid) -> anyhow::Result<()> {
@@ -114,6 +118,7 @@ impl RegistryService {
             space_id: entry.space_id,
             entry_id: Some(id),
             key: Some(entry.key),
+            entry: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
         

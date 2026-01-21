@@ -6,6 +6,7 @@
     getSpace, 
     getEntries, 
     createEntry, 
+    updateEntry,
     deleteEntry, 
     type Space, 
     type RegistryEntry,
@@ -26,12 +27,34 @@
   let newEntryValueType = $state<'string' | 'number' | 'boolean' | 'json'>('string');
   let newEntryDescription = $state('');
 
+  // Edit entry form
+  let editingEntry: RegistryEntry | null = $state(null);
+  let editEntryKey = $state('');
+  let editEntryValue = $state('');
+  let editEntryValueType = $state<'string' | 'number' | 'boolean' | 'json'>('string');
+  let editEntryDescription = $state('');
+
   const {
     elements: { trigger, overlay, content, title, close, portalled },
     states: { open }
   } = createDialog({
     forceVisible: true
   });
+
+  const editDialog = createDialog({
+    forceVisible: true
+  });
+
+  const {
+    elements: {
+      portalled: editPortalled,
+      overlay: editOverlay,
+      content: editContent,
+      title: editTitle,
+      close: editClose
+    },
+    states: { open: editOpen }
+  } = editDialog;
 
   async function loadData() {
     try {
@@ -52,22 +75,28 @@
 
   function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.hostname}:3000/ws/spaces/${id}`;
+    const wsUrl = `${protocol}//${window.location.hostname}:3000/api/ws/${id}`;
     
     ws = new WebSocket(wsUrl);
     
     ws.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type === 'entry_created') {
-          entries = [...entries, message.entry];
-        } else if (message.type === 'entry_deleted') {
-          entries = entries.filter(e => e.id !== message.entry_id);
-        } else if (message.type === 'entry_updated') {
-          entries = entries.map(e => e.id === message.entry.id ? message.entry : e);
+        // Backend sends: { event_type: "created"/"updated"/"deleted", space_id, entry_id, key, entry, timestamp }
+        if (message.space_id === id) {
+          if (message.event_type === 'created' && message.entry) {
+            // Add new entry to the list
+            entries = [...entries, message.entry];
+          } else if (message.event_type === 'updated' && message.entry) {
+            // Update existing entry in the list
+            entries = entries.map(e => e.id === message.entry.id ? message.entry : e);
+          } else if (message.event_type === 'deleted' && message.entry_id) {
+            // Remove entry from the list
+            entries = entries.filter(e => e.id !== message.entry_id);
+          }
         }
-      } catch {
-        // Ignore parse errors
+      } catch (err) {
+        console.error('WebSocket message error:', err);
       }
     };
 
@@ -100,6 +129,33 @@
       await loadData();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to create entry';
+    }
+  }
+
+  function handleEditEntry(entry: RegistryEntry) {
+    editingEntry = entry;
+    editEntryKey = entry.key;
+    editEntryValue = entry.value;
+    editEntryValueType = entry.value_type;
+    editEntryDescription = entry.description || '';
+    editOpen.set(true);
+  }
+
+  async function handleUpdateEntry() {
+    if (!editingEntry || !editEntryKey.trim() || !editEntryValue.trim()) return;
+    
+    try {
+      const updates: Partial<CreateEntryRequest> = {
+        key: editEntryKey,
+        value: editEntryValue,
+        value_type: editEntryValueType,
+        description: editEntryDescription || undefined,
+      };
+      await updateEntry(id, editingEntry.id, updates);
+      editOpen.set(false);
+      editingEntry = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to update entry';
     }
   }
 
@@ -203,7 +259,13 @@
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                 {new Date(entry.updated_at).toLocaleString()}
               </td>
-              <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+              <td class="px-6 py-4 whitespace-nowrap text-right text-sm space-x-3">
+                <button
+                  onclick={() => handleEditEntry(entry)}
+                  class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 font-medium"
+                >
+                  Edit
+                </button>
                 <button
                   onclick={() => handleDeleteEntry(entry.id)}
                   class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 font-medium"
@@ -307,6 +369,105 @@
 
       <button
         use:melt={$close}
+        class="absolute right-4 top-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+        aria-label="Close"
+      >
+        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  {/if}
+</div>
+
+<!-- Edit Entry Dialog Portal -->
+<div use:melt={$editPortalled}>
+  {#if $editOpen}
+    <div use:melt={$editOverlay} class="fixed inset-0 z-40 bg-black/50"></div>
+    <div
+      use:melt={$editContent}
+      class="fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white dark:bg-gray-800 p-6 shadow-xl"
+    >
+      <h2 use:melt={$editTitle} class="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+        Edit Entry
+      </h2>
+      
+      <form onsubmit={(e) => { e.preventDefault(); handleUpdateEntry(); }}>
+        <div class="space-y-4">
+          <div>
+            <label for="edit-key" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Key *
+            </label>
+            <input
+              id="edit-key"
+              type="text"
+              bind:value={editEntryKey}
+              placeholder="e.g., config.database.host"
+              required
+              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+            />
+          </div>
+          <div>
+            <label for="edit-value" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Value *
+            </label>
+            <textarea
+              id="edit-value"
+              bind:value={editEntryValue}
+              placeholder="Enter value"
+              rows="4"
+              required
+              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm"
+            ></textarea>
+          </div>
+          <div>
+            <label for="edit-valueType" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Value Type
+            </label>
+            <select
+              id="edit-valueType"
+              bind:value={editEntryValueType}
+              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+            >
+              <option value="string">String</option>
+              <option value="number">Number</option>
+              <option value="boolean">Boolean</option>
+              <option value="json">JSON</option>
+            </select>
+          </div>
+          <div>
+            <label for="edit-description" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Description (optional)
+            </label>
+            <input
+              id="edit-description"
+              type="text"
+              bind:value={editEntryDescription}
+              placeholder="Optional description"
+              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+            />
+          </div>
+        </div>
+        
+        <div class="flex justify-end gap-3 mt-6">
+          <button
+            type="button"
+            use:melt={$editClose}
+            class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Update Entry
+          </button>
+        </div>
+      </form>
+
+      <button
+        use:melt={$editClose}
         class="absolute right-4 top-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
         aria-label="Close"
       >
