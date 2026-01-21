@@ -1,0 +1,51 @@
+[package]
+name = "rugistry-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["ws", "macros"] }
+tokio = { version = "1.0", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+futures = "0.3"
+
+# Database - using PostgreSQL
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "uuid", "chrono"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Authentication
+jsonwebtoken = "9.0"
+bcrypt = "0.15"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+thiserror = "1.0"
+rand = "0.8"
+
+# Environment and configuration
+dotenvy = "0.15"
+
+# Tracing and logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# API documentation
+utoipa = { version = "4.0", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "6.0", features = ["axum"] }
+
+[dev-dependencies]
+# Testing dependencies
+tokio-test = "0.4"
+tower = { version = "0.4", features = ["util"] }
+hyper = { version = "1.0", features = ["full"] }
+http-body-util = "0.1"
+reqwest = { version = "0.11", features = ["json"] }
+tempfile = "3.8"

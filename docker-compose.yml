@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rugistry-postgres
+    environment:
+      POSTGRES_DB: rugistry
+      POSTGRES_USER: rugistry_user
+      POSTGRES_PASSWORD: rugistry_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rugistry_user -d rugistry"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./rugistry-service
+      dockerfile: Dockerfile
+    container_name: rugistry-backend
+    environment:
+      DATABASE_URL: postgresql://rugistry_user:rugistry_pass@postgres:5432/rugistry
+      HOST: 0.0.0.0
+      PORT: 3000
+      RUST_LOG: info
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./rugistry-frontend
+      dockerfile: Dockerfile
+    container_name: rugistry-frontend
+    environment:
+      VITE_API_URL: http://localhost:3000
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
