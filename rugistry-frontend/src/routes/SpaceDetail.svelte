@@ -24,15 +24,17 @@
   // New entry form
   let newEntryKey = $state('');
   let newEntryValue = $state('');
-  let newEntryValueType = $state<'string' | 'number' | 'boolean' | 'json'>('string');
+  let newEntryValueType = $state<'string' | 'number' | 'boolean' | 'json' | 'list'>('string');
   let newEntryDescription = $state('');
+  let newEntryListItems = $state<string[]>([]);
 
   // Edit entry form
   let editingEntry: RegistryEntry | null = $state(null);
   let editEntryKey = $state('');
   let editEntryValue = $state('');
-  let editEntryValueType = $state<'string' | 'number' | 'boolean' | 'json'>('string');
+  let editEntryValueType = $state<'string' | 'number' | 'boolean' | 'json' | 'list'>('string');
   let editEntryDescription = $state('');
+  let editEntryListItems = $state<string[]>([]);
 
   const {
     elements: { trigger, overlay, content, title, close, portalled },
@@ -111,12 +113,24 @@
   }
 
   async function handleCreateEntry() {
-    if (!newEntryKey.trim() || !newEntryValue.trim()) return;
+    if (!newEntryKey.trim()) return;
+    
+    // For list type, validate and serialize list items
+    let finalValue = newEntryValue;
+    if (newEntryValueType === 'list') {
+      if (newEntryListItems.length === 0) {
+        error = 'List must have at least one item';
+        return;
+      }
+      finalValue = JSON.stringify(newEntryListItems);
+    } else if (!finalValue.trim()) {
+      return;
+    }
     
     try {
       const request: CreateEntryRequest = {
         key: newEntryKey,
-        value: newEntryValue,
+        value: finalValue,
         value_type: newEntryValueType,
         description: newEntryDescription || undefined,
       };
@@ -126,7 +140,7 @@
       newEntryValue = '';
       newEntryValueType = 'string';
       newEntryDescription = '';
-      await loadData();
+      newEntryListItems = [];
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to create entry';
     }
@@ -138,24 +152,82 @@
     editEntryValue = entry.value;
     editEntryValueType = entry.value_type;
     editEntryDescription = entry.description || '';
-    editOpen.set(true);
+    
+    // Parse list items if it's a list type
+    if (entry.value_type === 'list') {
+      try {
+        editEntryListItems = JSON.parse(entry.value);
+      } catch {
+        editEntryListItems = [];
+      }
+    } else {
+      editEntryListItems = [];
+    }
+    
+    editDialog.states.open.set(true);
   }
 
   async function handleUpdateEntry() {
-    if (!editingEntry || !editEntryKey.trim() || !editEntryValue.trim()) return;
+    if (!editingEntry || !editEntryKey.trim()) return;
+    
+    // For list type, validate and serialize list items
+    let finalValue = editEntryValue;
+    if (editEntryValueType === 'list') {
+      if (editEntryListItems.length === 0) {
+        error = 'List must have at least one item';
+        return;
+      }
+      finalValue = JSON.stringify(editEntryListItems);
+    } else if (!finalValue.trim()) {
+      return;
+    }
     
     try {
       const updates: Partial<CreateEntryRequest> = {
         key: editEntryKey,
-        value: editEntryValue,
+        value: finalValue,
         value_type: editEntryValueType,
         description: editEntryDescription || undefined,
       };
       await updateEntry(id, editingEntry.id, updates);
-      editOpen.set(false);
+      editDialog.states.open.set(false);
       editingEntry = null;
+      editEntryListItems = [];
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to update entry';
+    }
+  }
+
+  // List management helpers for new entry
+  function addNewListItem() {
+    if (newEntryValue.trim()) {
+      newEntryListItems = [...newEntryListItems, newEntryValue.trim()];
+      newEntryValue = '';
+    }
+  }
+
+  function removeNewListItem(index: number) {
+    newEntryListItems = newEntryListItems.filter((_, i) => i !== index);
+  }
+
+  // List management helpers for edit entry
+  function addEditListItem() {
+    if (editEntryValue.trim()) {
+      editEntryListItems = [...editEntryListItems, editEntryValue.trim()];
+      editEntryValue = '';
+    }
+  }
+
+  function removeEditListItem(index: number) {
+    editEntryListItems = editEntryListItems.filter((_, i) => i !== index);
+  }
+
+  // Helper to safely parse list values
+  function parseListValue(value: string): string[] {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return [];
     }
   }
 
@@ -164,7 +236,6 @@
     
     try {
       await deleteEntry(id, entryId);
-      await loadData();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to delete entry';
     }
@@ -250,7 +321,21 @@
             <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
               <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">{entry.key}</td>
               <td class="px-6 py-4 text-sm text-gray-600 dark:text-gray-300">
-                <div class="max-w-xs truncate" title={entry.value}>{entry.value}</div>
+                {#if entry.value_type === 'list'}
+                  {@const items = parseListValue(entry.value)}
+                  <div class="space-y-1">
+                    {#each items as item, i}
+                      {#if i < 3}
+                        <div class="text-xs bg-gray-100 dark:bg-gray-600 px-2 py-1 rounded inline-block mr-1">{item}</div>
+                      {/if}
+                    {/each}
+                    {#if items.length > 3}
+                      <span class="text-xs text-gray-500">+{items.length - 3} more</span>
+                    {/if}
+                  </div>
+                {:else}
+                  <div class="max-w-xs truncate" title={entry.value}>{entry.value}</div>
+                {/if}
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                 <span class="px-2 py-1 bg-gray-100 dark:bg-gray-600 rounded text-xs">{entry.value_type}</span>
@@ -309,19 +394,6 @@
             />
           </div>
           <div>
-            <label for="value" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Value *
-            </label>
-            <textarea
-              id="value"
-              bind:value={newEntryValue}
-              placeholder="Enter value"
-              rows="4"
-              required
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm"
-            ></textarea>
-          </div>
-          <div>
             <label for="valueType" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Value Type
             </label>
@@ -334,8 +406,68 @@
               <option value="number">Number</option>
               <option value="boolean">Boolean</option>
               <option value="json">JSON</option>
+              <option value="list">List</option>
             </select>
           </div>
+          
+          {#if newEntryValueType === 'list'}
+            <div>
+              <label for="new-list-item" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                List Items *
+              </label>
+              <div class="space-y-2">
+                <div class="flex gap-2">
+                  <input
+                    id="new-list-item"
+                    type="text"
+                    bind:value={newEntryValue}
+                    placeholder="Enter list item"
+                    onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), addNewListItem())}
+                    class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                  />
+                  <button
+                    type="button"
+                    onclick={addNewListItem}
+                    class="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    Add
+                  </button>
+                </div>
+                {#if newEntryListItems.length > 0}
+                  <div class="space-y-1 max-h-40 overflow-y-auto">
+                    {#each newEntryListItems as item, index}
+                      <div class="flex items-center gap-2 bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded">
+                        <span class="flex-1 text-sm text-gray-900 dark:text-white">{item}</span>
+                        <button
+                          type="button"
+                          onclick={() => removeNewListItem(index)}
+                          class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <p class="text-sm text-gray-500 dark:text-gray-400">No items added yet</p>
+                {/if}
+              </div>
+            </div>
+          {:else}
+            <div>
+              <label for="value" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Value *
+              </label>
+              <textarea
+                id="value"
+                bind:value={newEntryValue}
+                placeholder="Enter value"
+                rows="4"
+                required
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm"
+              ></textarea>
+            </div>
+          {/if}
           <div>
             <label for="description" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Description (optional)
@@ -408,19 +540,6 @@
             />
           </div>
           <div>
-            <label for="edit-value" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Value *
-            </label>
-            <textarea
-              id="edit-value"
-              bind:value={editEntryValue}
-              placeholder="Enter value"
-              rows="4"
-              required
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm"
-            ></textarea>
-          </div>
-          <div>
             <label for="edit-valueType" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Value Type
             </label>
@@ -433,8 +552,68 @@
               <option value="number">Number</option>
               <option value="boolean">Boolean</option>
               <option value="json">JSON</option>
+              <option value="list">List</option>
             </select>
           </div>
+          
+          {#if editEntryValueType === 'list'}
+            <div>
+              <label for="edit-list-item" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                List Items *
+              </label>
+              <div class="space-y-2">
+                <div class="flex gap-2">
+                  <input
+                    id="edit-list-item"
+                    type="text"
+                    bind:value={editEntryValue}
+                    placeholder="Enter list item"
+                    onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), addEditListItem())}
+                    class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                  />
+                  <button
+                    type="button"
+                    onclick={addEditListItem}
+                    class="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    Add
+                  </button>
+                </div>
+                {#if editEntryListItems.length > 0}
+                  <div class="space-y-1 max-h-40 overflow-y-auto">
+                    {#each editEntryListItems as item, index}
+                      <div class="flex items-center gap-2 bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded">
+                        <span class="flex-1 text-sm text-gray-900 dark:text-white">{item}</span>
+                        <button
+                          type="button"
+                          onclick={() => removeEditListItem(index)}
+                          class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <p class="text-sm text-gray-500 dark:text-gray-400">No items added yet</p>
+                {/if}
+              </div>
+            </div>
+          {:else}
+            <div>
+              <label for="edit-value" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Value *
+              </label>
+              <textarea
+                id="edit-value"
+                bind:value={editEntryValue}
+                placeholder="Enter value"
+                rows="4"
+                required
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm"
+              ></textarea>
+            </div>
+          {/if}
           <div>
             <label for="edit-description" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Description (optional)

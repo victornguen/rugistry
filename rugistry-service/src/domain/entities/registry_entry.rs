@@ -22,6 +22,7 @@ pub enum ValueType {
     Number,
     Boolean,
     Json,
+    List,
 }
 
 impl RegistryEntry {

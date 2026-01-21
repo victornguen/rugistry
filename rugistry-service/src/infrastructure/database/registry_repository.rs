@@ -124,6 +124,7 @@ fn value_type_to_string(value_type: &ValueType) -> &str {
         ValueType::Number => "number",
         ValueType::Boolean => "boolean",
         ValueType::Json => "json",
+        ValueType::List => "list",
     }
 }
 
@@ -133,6 +134,7 @@ fn string_to_value_type(s: &str) -> ValueType {
         "number" => ValueType::Number,
         "boolean" => ValueType::Boolean,
         "json" => ValueType::Json,
+        "list" => ValueType::List,
         _ => ValueType::String,
     }
 }

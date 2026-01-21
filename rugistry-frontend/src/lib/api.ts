@@ -13,7 +13,7 @@ export interface RegistryEntry {
   space_id: string;
   key: string;
   value: string;
-  value_type: 'string' | 'number' | 'boolean' | 'json';
+  value_type: 'string' | 'number' | 'boolean' | 'json' | 'list';
   description: string | null;
   version: number;
   created_at: string;
@@ -28,7 +28,7 @@ export interface CreateSpaceRequest {
 export interface CreateEntryRequest {
   key: string;
   value: string;
-  value_type: 'string' | 'number' | 'boolean' | 'json';
+  value_type: 'string' | 'number' | 'boolean' | 'json' | 'list';
   description?: string;
 }
 
