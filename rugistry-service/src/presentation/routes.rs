@@ -74,12 +74,9 @@ pub fn create_router(
             auth_middleware,
         ));
 
+    // WS route has no HTTP auth middleware — auth is done via the first WebSocket message
     let ws_routes = Router::new()
-        .route("/api/v1/ws/:space_id", get(handlers::ws_handler))
-        .route_layer(middleware::from_fn_with_state(
-            state.auth_config.clone(),
-            auth_middleware,
-        ));
+        .route("/api/v1/ws/:space_id", get(handlers::ws_handler));
 
     Router::new()
         .merge(public_routes)

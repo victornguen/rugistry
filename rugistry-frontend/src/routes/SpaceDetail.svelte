@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { createDialog, melt } from '@melt-ui/svelte';
   import { navigate } from 'svelte-routing';
+  import { getToken } from '../lib/auth';
   import { 
     getSpace, 
     getEntries, 
@@ -257,16 +258,27 @@
   }
 
   function connectWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.hostname}:3000/api/v1/ws/${id}`;
-    ws = new WebSocket(wsUrl);
+    const baseUrl = (import.meta.env.VITE_API_URL || `http://${window.location.hostname}:3000`)
+      .replace(/^http/, 'ws');
+    ws = new WebSocket(`${baseUrl}/api/v1/ws/${id}`);
+    ws.onopen = () => {
+      const token = getToken();
+      if (token) ws.send(JSON.stringify({ token }));
+    };
     ws.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
         if (message.space_id === id) {
-          if (message.event_type === 'created' && message.entry) entries = [...entries, message.entry];
-          else if (message.event_type === 'updated' && message.entry) entries = entries.map(e => e.id === message.entry.id ? message.entry : e);
-          else if (message.event_type === 'deleted' && message.entry_id) entries = entries.filter(e => e.id !== message.entry_id);
+          if (message.event_type === 'created' && message.entry) {
+            // Skip if we already applied this entry optimistically
+            if (!entries.find(e => e.id === message.entry.id)) {
+              entries = [...entries, message.entry];
+            }
+          } else if (message.event_type === 'updated' && message.entry) {
+            entries = entries.map(e => e.id === message.entry.id ? message.entry : e);
+          } else if (message.event_type === 'deleted' && message.entry_id) {
+            entries = entries.filter(e => e.id !== message.entry_id);
+          }
         }
       } catch {}
     };
@@ -278,7 +290,7 @@
   async function handleCreateEntry() {
     if (!newEntryKey.trim()) return;
     formError = '';
-    let finalValue = newEntryValue;
+    let finalValue = String(newEntryValue);
     if (newEntryValueType === 'list') {
       finalValue = JSON.stringify(newEntryListItems);
     } else if (!finalValue.trim()) {
@@ -310,7 +322,7 @@
   async function handleUpdateEntry() {
     if (!editingEntry || !editEntryKey.trim()) return;
     formError = '';
-    let finalValue = editEntryValue;
+    let finalValue = String(editEntryValue);
     if (editEntryValueType === 'list') {
       finalValue = JSON.stringify(editEntryListItems);
     } else if (!finalValue.trim()) {

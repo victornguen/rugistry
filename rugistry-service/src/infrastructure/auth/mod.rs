@@ -82,18 +82,16 @@ pub async fn auth_middleware(
     mut request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let auth_header = request
+    let token = request
         .headers()
         .get(AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    let token = auth_header
-        .strip_prefix("Bearer ")
+        .and_then(|h| h.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     let claims = decode::<Claims>(
         token,
+
         &DecodingKey::from_secret(config.jwt_secret.as_bytes()),
         &Validation::new(Algorithm::HS256),
     )
@@ -104,6 +102,3 @@ pub async fn auth_middleware(
     Ok(next.run(request).await)
 }
 
-pub fn get_claims_from_request(request: &Request) -> Option<&Claims> {
-    request.extensions().get::<Claims>()
-}
