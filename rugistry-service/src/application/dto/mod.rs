@@ -91,3 +91,19 @@ pub enum ChangeEventType {
     Deleted,
 }
 
+// Webhook DTOs
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateWebhookRequest {
+    pub url: String,
+    pub secret: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WebhookResponse {
+    pub id: String,
+    pub space_id: String,
+    pub url: String,
+    pub has_secret: bool,
+    pub created_at: String,
+}
+

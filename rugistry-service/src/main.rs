@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use infrastructure::{
     auth::AuthConfig,
-    database::{init_database, registry_repository::PostgresRegistryRepository, space_repository::PostgresSpaceRepository},
+    database::{init_database, registry_repository::PostgresRegistryRepository, space_repository::PostgresSpaceRepository, webhook_repository::PostgresWebhookRepository},
     events::EventBus,
 };
-use application::services::{RegistryService, SpaceService};
+use application::services::{RegistryService, SpaceService, WebhookService};
 use presentation::routes::create_router;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -38,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
     // Create repositories
     let space_repo = Arc::new(PostgresSpaceRepository::new(pool.clone()));
     let registry_repo = Arc::new(PostgresRegistryRepository::new(pool.clone()));
+    let webhook_repo = Arc::new(PostgresWebhookRepository::new(pool.clone()));
 
     // Create event bus
     let event_bus = Arc::new(EventBus::new(100));
@@ -45,9 +46,21 @@ async fn main() -> anyhow::Result<()> {
     // Create services
     let space_service = Arc::new(SpaceService::new(space_repo));
     let registry_service = Arc::new(RegistryService::new(registry_repo, event_bus.clone()));
+    let webhook_service = Arc::new(WebhookService::new(webhook_repo));
+
+    // Spawn background task to deliver webhook events
+    {
+        let webhook_service = webhook_service.clone();
+        let mut receiver = event_bus.subscribe();
+        tokio::spawn(async move {
+            while let Ok(notification) = receiver.recv().await {
+                webhook_service.fire_webhooks(&notification).await;
+            }
+        });
+    }
 
     // Create router with CORS
-    let app = create_router(pool, space_service, registry_service, event_bus, auth_config)
+    let app = create_router(pool, space_service, registry_service, webhook_service, event_bus, auth_config)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

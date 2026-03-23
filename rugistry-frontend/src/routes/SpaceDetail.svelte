@@ -12,11 +12,15 @@
     addShare,
     removeShare,
     searchUsers,
+    listWebhooks,
+    createWebhook,
+    deleteWebhook,
     type Space, 
     type RegistryEntry,
     type CreateEntryRequest,
     type SpaceShare,
     type UserSearchResult,
+    type Webhook,
   } from '../lib/api';
   import MonacoEditor from '../components/MonacoEditor.svelte';
 
@@ -149,6 +153,55 @@
   function handleViewEntry(entry: RegistryEntry) {
     viewingEntry = entry;
     viewDialog.states.open.set(true);
+  }
+
+  // ── Webhook dialog ────────────────────────────────────────────────────────
+  const webhookDialog = createDialog({ forceVisible: true });
+  const {
+    elements: { portalled: webhookPortalled, overlay: webhookOverlay, content: webhookContent, title: webhookTitle, close: webhookClose },
+    states: { open: webhookOpen }
+  } = webhookDialog;
+
+  let webhooks: Webhook[] = $state([]);
+  let webhooksLoading = $state(false);
+  let newWebhookUrl = $state('');
+  let newWebhookSecret = $state('');
+  let webhookError = $state('');
+
+  async function openWebhookModal() {
+    if (!space) return;
+    webhookError = ''; newWebhookUrl = ''; newWebhookSecret = '';
+    webhooksLoading = true;
+    webhookOpen.set(true);
+    try {
+      webhooks = await listWebhooks(space.id);
+    } catch (e) {
+      webhookError = e instanceof Error ? e.message : 'Failed to load webhooks';
+    } finally {
+      webhooksLoading = false;
+    }
+  }
+
+  async function handleCreateWebhook() {
+    if (!space || !newWebhookUrl.trim()) return;
+    webhookError = '';
+    try {
+      const created = await createWebhook(space.id, newWebhookUrl.trim(), newWebhookSecret.trim() || undefined);
+      webhooks = [...webhooks, created];
+      newWebhookUrl = ''; newWebhookSecret = '';
+    } catch (e) {
+      webhookError = e instanceof Error ? e.message : 'Failed to add webhook';
+    }
+  }
+
+  async function handleDeleteWebhook(webhookId: string) {
+    if (!space) return;
+    try {
+      await deleteWebhook(space.id, webhookId);
+      webhooks = webhooks.filter(w => w.id !== webhookId);
+    } catch (e) {
+      webhookError = e instanceof Error ? e.message : 'Failed to delete webhook';
+    }
   }
 
   // ── Permission helpers ────────────────────────────────────────────────────
@@ -354,6 +407,12 @@
         class="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium border border-gray-300 dark:border-gray-600"
       >
         Share
+      </button>
+      <button
+        onclick={openWebhookModal}
+        class="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium border border-gray-300 dark:border-gray-600"
+      >
+        Webhooks
       </button>
     {/if}
     {#if canCreate()}
@@ -930,6 +989,89 @@
       </div>
 
       <button use:melt={$viewClose} class="absolute right-4 top-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  {/if}
+</div>
+
+<!-- Webhook Management Modal -->
+<div use:melt={$webhookPortalled}>
+  {#if $webhookOpen}
+    <div use:melt={$webhookOverlay} class="fixed inset-0 bg-black/50 z-40"></div>
+    <div use:melt={$webhookContent}
+      class="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white dark:bg-gray-800 shadow-2xl p-6 focus:outline-none"
+    >
+      <h2 use:melt={$webhookTitle} class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Webhooks</h2>
+
+      {#if webhookError}
+        <div class="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg text-sm text-red-700 dark:text-red-300">
+          {webhookError}
+        </div>
+      {/if}
+
+      <!-- Add new webhook -->
+      <div class="mb-6 space-y-2">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">URL</label>
+        <input
+          type="url"
+          bind:value={newWebhookUrl}
+          placeholder="https://example.com/hook"
+          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          onkeydown={(e) => { if (e.key === 'Enter') handleCreateWebhook(); }}
+        />
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Secret (optional)</label>
+        <input
+          type="text"
+          bind:value={newWebhookSecret}
+          placeholder="Sent as X-Webhook-Secret header"
+          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <button
+          onclick={handleCreateWebhook}
+          disabled={!newWebhookUrl.trim()}
+          class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+        >
+          Add Webhook
+        </button>
+      </div>
+
+      <!-- Existing webhooks -->
+      {#if webhooksLoading}
+        <p class="text-sm text-gray-500 dark:text-gray-400">Loading...</p>
+      {:else if webhooks.length === 0}
+        <p class="text-sm text-gray-500 dark:text-gray-400 italic">No webhooks configured.</p>
+      {:else}
+        <ul class="divide-y divide-gray-100 dark:divide-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden">
+          {#each webhooks as wh}
+            <li class="flex items-start gap-3 px-4 py-3 bg-white dark:bg-gray-750">
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-mono text-gray-800 dark:text-gray-200 truncate">{wh.url}</p>
+                <p class="text-xs text-gray-400 mt-0.5">
+                  {wh.has_secret ? '🔒 secret set' : 'no secret'} &bull; added {new Date(wh.created_at).toLocaleDateString()}
+                </p>
+              </div>
+              <button
+                onclick={() => handleDeleteWebhook(wh.id)}
+                class="text-red-500 hover:text-red-700 dark:hover:text-red-400 text-xs px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors shrink-0"
+              >
+                Remove
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
+      <div class="flex justify-end mt-6">
+        <button use:melt={$webhookClose}
+          class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors text-sm">
+          Close
+        </button>
+      </div>
+
+      <button use:melt={$webhookClose} class="absolute right-4 top-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Close">
         <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
         </svg>

@@ -86,7 +86,10 @@ export async function createSpace(data: CreateSpaceRequest): Promise<Space> {
     headers: getHeaders(),
     body: JSON.stringify(data),
   });
-  if (!response.ok) throw new Error('Failed to create space');
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? 'Failed to create space');
+  }
   return response.json();
 }
 
@@ -96,7 +99,10 @@ export async function updateSpace(id: string, data: Partial<CreateSpaceRequest>)
     headers: getHeaders(),
     body: JSON.stringify(data),
   });
-  if (!response.ok) throw new Error('Failed to update space');
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? 'Failed to update space');
+  }
   return response.json();
 }
 
@@ -105,7 +111,10 @@ export async function deleteSpace(id: string): Promise<void> {
     method: 'DELETE',
     headers: getHeaders(),
   });
-  if (!response.ok) throw new Error('Failed to delete space');
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? 'Failed to delete space');
+  }
 }
 
 // Space sharing API
@@ -229,4 +238,48 @@ export function connectWebSocket(
   };
   
   return ws;
+}
+
+// Webhook types and functions
+export interface Webhook {
+  id: string;
+  space_id: string;
+  url: string;
+  has_secret: boolean;
+  created_at: string;
+}
+
+export async function listWebhooks(spaceId: string): Promise<Webhook[]> {
+  const response = await fetch(`${API_URL}/api/v1/spaces/${spaceId}/webhooks`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? 'Failed to list webhooks');
+  }
+  return response.json();
+}
+
+export async function createWebhook(spaceId: string, url: string, secret?: string): Promise<Webhook> {
+  const response = await fetch(`${API_URL}/api/v1/spaces/${spaceId}/webhooks`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ url, secret: secret || null }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? 'Failed to create webhook');
+  }
+  return response.json();
+}
+
+export async function deleteWebhook(spaceId: string, webhookId: string): Promise<void> {
+  const response = await fetch(`${API_URL}/api/v1/spaces/${spaceId}/webhooks/${webhookId}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? 'Failed to delete webhook');
+  }
 }

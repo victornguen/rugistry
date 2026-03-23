@@ -12,6 +12,7 @@
   let error = $state('');
   let newSpaceName = $state('');
   let newSpaceDescription = $state('');
+  let createError = $state('');
 
   // Share modal state
   let sharingSpace: Space | null = $state(null);
@@ -67,14 +68,16 @@
 
   async function handleCreateSpace() {
     if (!newSpaceName.trim()) return;
+    createError = '';
     try {
       await createSpace({ name: newSpaceName, description: newSpaceDescription || undefined });
       open.set(false);
       newSpaceName = '';
       newSpaceDescription = '';
+      createError = '';
       await loadSpaces();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to create space';
+      createError = e instanceof Error ? e.message : 'Failed to create space';
     }
   }
 
@@ -235,6 +238,9 @@
       </h2>
       <form onsubmit={(e) => { e.preventDefault(); handleCreateSpace(); }}>
         <div class="space-y-4">
+          {#if createError}
+            <div class="p-2 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 rounded text-sm">{createError}</div>
+          {/if}
           <div>
             <label for="name" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name *</label>
             <input id="name" type="text" bind:value={newSpaceName} placeholder="Enter space name" required

@@ -12,7 +12,7 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 futures = "0.3"
 
 # Database - using PostgreSQL
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "uuid", "chrono"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "uuid", "chrono", "migrate"] }
 async-trait = "0.1"
 
 # Serialization
@@ -45,6 +45,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # API documentation
 utoipa = { version = "4.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "6.0", features = ["axum"] }
+parking_lot = { version = "0.12", features = ["hardware-lock-elision", "serde", "deadlock_detection", "arc_lock"] }
 
 [dev-dependencies]
 # Testing dependencies

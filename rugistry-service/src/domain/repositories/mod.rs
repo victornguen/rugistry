@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::domain::entities::{RegistryEntry, Space};
+use crate::domain::entities::{RegistryEntry, Space, Webhook};
 
 pub type Result<T> = std::result::Result<T, RepositoryError>;
 
@@ -56,5 +56,13 @@ pub trait RegistryRepository: Send + Sync {
     async fn get_by_key(&self, space_id: Uuid, key: &str) -> Result<RegistryEntry>;
     async fn list_by_space(&self, space_id: Uuid) -> Result<Vec<RegistryEntry>>;
     async fn update(&self, entry: &RegistryEntry) -> Result<RegistryEntry>;
+    async fn delete(&self, id: Uuid) -> Result<()>;
+}
+
+#[async_trait]
+pub trait WebhookRepository: Send + Sync {
+    async fn create(&self, webhook: &Webhook) -> Result<Webhook>;
+    async fn list_by_space(&self, space_id: Uuid) -> Result<Vec<Webhook>>;
+    async fn get_by_id(&self, id: Uuid) -> Result<Webhook>;
     async fn delete(&self, id: Uuid) -> Result<()>;
 }
