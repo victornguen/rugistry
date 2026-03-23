@@ -135,6 +135,20 @@ export async function removeShare(spaceId: string, userId: string): Promise<void
   if (!response.ok) throw new Error('Failed to remove share');
 }
 
+export interface UserSearchResult {
+  username: string;
+  email: string | null;
+}
+
+export async function searchUsers(query: string): Promise<UserSearchResult[]> {
+  if (!query.trim()) return [];
+  const response = await fetch(`${API_URL}/api/v1/users/search?q=${encodeURIComponent(query)}`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) return [];
+  return response.json();
+}
+
 // Registry Entry API
 export async function getEntries(spaceId: string): Promise<RegistryEntry[]> {
   const response = await fetch(`${API_URL}/api/v1/spaces/${spaceId}/entries`, { headers: getHeaders() });
@@ -151,7 +165,10 @@ export async function createEntry(spaceId: string, data: CreateEntryRequest): Pr
       ...data
     }),
   });
-  if (!response.ok) throw new Error('Failed to create entry');
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? 'Failed to create entry');
+  }
   return response.json();
 }
 
@@ -161,7 +178,10 @@ export async function updateEntry(spaceId: string, entryId: string, data: Partia
     headers: getHeaders(),
     body: JSON.stringify(data),
   });
-  if (!response.ok) throw new Error('Failed to update entry');
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? 'Failed to update entry');
+  }
   return response.json();
 }
 
@@ -170,7 +190,10 @@ export async function deleteEntry(spaceId: string, entryId: string): Promise<voi
     method: 'DELETE',
     headers: getHeaders(),
   });
-  if (!response.ok) throw new Error('Failed to delete entry');
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? 'Failed to delete entry');
+  }
 }
 
 // WebSocket connection

@@ -1,13 +1,55 @@
 use axum::{
-    extract::State,
+    extract::{State, Query},
     http::StatusCode,
     Json,
+    Extension,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use crate::infrastructure::auth::Claims;
 
 use crate::infrastructure::auth::{hash_password, verify_password, create_token, LoginRequest, RegisterRequest, AuthResponse};
 use crate::presentation::routes::AppState;
+
+#[derive(Debug, Deserialize)]
+pub struct UserSearchQuery {
+    pub q: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserSearchResult {
+    pub username: String,
+    pub email: Option<String>,
+}
+
+pub async fn search_users(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Query(query): Query<UserSearchQuery>,
+) -> Result<Json<Vec<UserSearchResult>>, (StatusCode, Json<ErrorResponse>)> {
+    if query.q.trim().is_empty() {
+        return Ok(Json(vec![]));
+    }
+    let pattern = format!("%{}%", query.q.to_lowercase());
+    let current_user_id = Uuid::parse_str(&claims.sub).map_err(|_| (
+        StatusCode::UNAUTHORIZED,
+        Json(ErrorResponse { error: "Invalid token".to_string() }),
+    ))?;
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT username, email FROM users WHERE LOWER(username) LIKE $1 AND id != $2 ORDER BY username LIMIT 10"
+    )
+    .bind(&pattern)
+    .bind(current_user_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse { error: format!("Database error: {}", e) }),
+    ))?;
+
+    Ok(Json(rows.into_iter().map(|(username, email)| UserSearchResult { username, email }).collect()))
+}
 
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {

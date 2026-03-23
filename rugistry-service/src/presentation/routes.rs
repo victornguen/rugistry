@@ -52,6 +52,7 @@ pub fn create_router(
         .route("/api/v1/spaces/:id/shares", post(handlers::add_share))
         .route("/api/v1/spaces/:id/shares", get(handlers::get_shares))
         .route("/api/v1/spaces/:id/shares/:user_id", delete(handlers::remove_share))
+        .route("/api/v1/users/search", get(handlers::search_users))
         .route_layer(middleware::from_fn_with_state(
             state.auth_config.clone(),
             auth_middleware,

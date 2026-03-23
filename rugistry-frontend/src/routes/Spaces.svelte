@@ -3,8 +3,8 @@
   import { createDialog, melt } from '@melt-ui/svelte';
   import { navigate } from 'svelte-routing';
   import {
-    getSpaces, createSpace, deleteSpace, getShares, addShare, removeShare,
-    type Space, type SpaceShare,
+    getSpaces, createSpace, deleteSpace, getShares, addShare, removeShare, searchUsers,
+    type Space, type SpaceShare, type UserSearchResult,
   } from '../lib/api';
 
   let spaces: Space[] = $state([]);
@@ -20,6 +20,28 @@
   let shareUsername = $state('');
   let sharePermission = $state('readonly');
   let shareError = $state('');
+
+  // Username autocomplete state
+  let userSuggestions: UserSearchResult[] = $state([]);
+  let suggestionsOpen = $state(false);
+  let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+  function onShareUsernameInput(e: Event) {
+    const val = (e.target as HTMLInputElement).value;
+    shareUsername = val;
+    if (searchDebounce) clearTimeout(searchDebounce);
+    if (!val.trim()) { userSuggestions = []; suggestionsOpen = false; return; }
+    searchDebounce = setTimeout(async () => {
+      userSuggestions = await searchUsers(val);
+      suggestionsOpen = userSuggestions.length > 0;
+    }, 200);
+  }
+
+  function selectSuggestion(u: UserSearchResult) {
+    shareUsername = u.username;
+    userSuggestions = [];
+    suggestionsOpen = false;
+  }
 
   const {
     elements: { trigger, overlay, content, title, close, portalled },
@@ -86,7 +108,7 @@
     if (!sharingSpace || !shareUsername.trim()) return;
     try {
       await addShare(sharingSpace.id, shareUsername.trim(), sharePermission);
-      shareUsername = '';
+      shareUsername = ''; userSuggestions = []; suggestionsOpen = false;
       shares = await getShares(sharingSpace.id);
       shareError = '';
     } catch (e) {
@@ -262,12 +284,35 @@
 
       <!-- Add share form -->
       <div class="flex gap-2 mb-4">
-        <input
-          type="text"
-          bind:value={shareUsername}
-          placeholder="Username"
-          class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-        />
+        <div class="relative flex-1">
+          <input
+            type="text"
+            value={shareUsername}
+            oninput={onShareUsernameInput}
+            onblur={() => setTimeout(() => { suggestionsOpen = false; }, 150)}
+            placeholder="Username"
+            autocomplete="off"
+            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+          />
+          {#if suggestionsOpen}
+            <ul class="absolute z-50 left-0 right-0 top-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg overflow-hidden">
+              {#each userSuggestions as suggestion}
+                <li>
+                  <button
+                    type="button"
+                    onmousedown={() => selectSuggestion(suggestion)}
+                    class="w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2"
+                  >
+                    <span class="text-sm font-medium text-gray-900 dark:text-white">{suggestion.username}</span>
+                    {#if suggestion.email}
+                      <span class="text-xs text-gray-400 dark:text-gray-500">{suggestion.email}</span>
+                    {/if}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
         <select
           bind:value={sharePermission}
           class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-white"

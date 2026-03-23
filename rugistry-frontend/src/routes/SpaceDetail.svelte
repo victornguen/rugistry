@@ -7,10 +7,16 @@
     getEntries, 
     createEntry, 
     updateEntry,
-    deleteEntry, 
+    deleteEntry,
+    getShares,
+    addShare,
+    removeShare,
+    searchUsers,
     type Space, 
     type RegistryEntry,
-    type CreateEntryRequest 
+    type CreateEntryRequest,
+    type SpaceShare,
+    type UserSearchResult,
   } from '../lib/api';
   import MonacoEditor from '../components/MonacoEditor.svelte';
 
@@ -54,6 +60,74 @@
   });
 
   const {
+    elements: { trigger: shareTrigger, overlay: shareOverlay, content: shareContent, title: shareTitle, close: shareClose, portalled: sharePortalled },
+    states: { open: shareOpen }
+  } = createDialog({ forceVisible: true });
+
+  // ── Share state ───────────────────────────────────────────────────────────
+  let shares: SpaceShare[] = $state([]);
+  let sharesLoading = $state(false);
+  let shareUsername = $state('');
+  let sharePermission = $state('readonly');
+  let shareError = $state('');
+  let userSuggestions: UserSearchResult[] = $state([]);
+  let suggestionsOpen = $state(false);
+  let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+  function onShareUsernameInput(e: Event) {
+    const val = (e.target as HTMLInputElement).value;
+    shareUsername = val;
+    if (searchDebounce) clearTimeout(searchDebounce);
+    if (!val.trim()) { userSuggestions = []; suggestionsOpen = false; return; }
+    searchDebounce = setTimeout(async () => {
+      userSuggestions = await searchUsers(val);
+      suggestionsOpen = userSuggestions.length > 0;
+    }, 200);
+  }
+
+  function selectSuggestion(u: UserSearchResult) {
+    shareUsername = u.username;
+    userSuggestions = [];
+    suggestionsOpen = false;
+  }
+
+  async function openShareModal() {
+    if (!space) return;
+    shareError = ''; shareUsername = ''; sharePermission = 'readonly';
+    sharesLoading = true;
+    shareOpen.set(true);
+    try {
+      shares = await getShares(space.id);
+    } catch (e) {
+      shareError = e instanceof Error ? e.message : 'Failed to load shares';
+    } finally {
+      sharesLoading = false;
+    }
+  }
+
+  async function handleAddShare() {
+    if (!space || !shareUsername.trim()) return;
+    try {
+      await addShare(space.id, shareUsername.trim(), sharePermission);
+      shareUsername = ''; userSuggestions = []; suggestionsOpen = false;
+      shares = await getShares(space.id);
+      shareError = '';
+    } catch (e) {
+      shareError = e instanceof Error ? e.message : 'Failed to add share';
+    }
+  }
+
+  async function handleRemoveShare(userId: string) {
+    if (!space) return;
+    try {
+      await removeShare(space.id, userId);
+      shares = await getShares(space.id);
+    } catch (e) {
+      shareError = e instanceof Error ? e.message : 'Failed to remove share';
+    }
+  }
+
+  const {
     elements: {
       portalled: editPortalled,
       overlay: editOverlay,
@@ -63,6 +137,19 @@
     },
     states: { open: editOpen }
   } = editDialog;
+
+  const viewDialog = createDialog({ forceVisible: true });
+  const {
+    elements: { portalled: viewPortalled, overlay: viewOverlay, content: viewContent, title: viewTitle, close: viewClose },
+    states: { open: viewOpen }
+  } = viewDialog;
+
+  let viewingEntry: RegistryEntry | null = $state(null);
+
+  function handleViewEntry(entry: RegistryEntry) {
+    viewingEntry = entry;
+    viewDialog.states.open.set(true);
+  }
 
   // ── Permission helpers ────────────────────────────────────────────────────
   function canCreate(): boolean {
@@ -146,7 +233,8 @@
       return;
     }
     try {
-      await createEntry(id, { key: newEntryKey, value: finalValue, value_type: newEntryValueType, description: newEntryDescription || undefined });
+      const created = await createEntry(id, { key: newEntryKey, value: finalValue, value_type: newEntryValueType, description: newEntryDescription || undefined });
+      entries = [...entries, created];
       open.set(false);
       newEntryKey = ''; newEntryValue = ''; newEntryValueType = 'string'; newEntryDescription = ''; newEntryListItems = []; newEntryListItemInput = '';
     } catch (e) {
@@ -177,7 +265,8 @@
       return;
     }
     try {
-      await updateEntry(id, editingEntry.id, { key: editEntryKey, value: finalValue, value_type: editEntryValueType, description: editEntryDescription || undefined });
+      const updated = await updateEntry(id, editingEntry.id, { key: editEntryKey, value: finalValue, value_type: editEntryValueType, description: editEntryDescription || undefined });
+      entries = entries.map(e => e.id === updated.id ? updated : e);
       editDialog.states.open.set(false);
       editingEntry = null;
       editEntryListItems = [];
@@ -217,6 +306,7 @@
     
     try {
       await deleteEntry(id, entryId);
+      entries = entries.filter(e => e.id !== entryId);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to delete entry';
     }
@@ -258,6 +348,14 @@
         <p class="text-gray-600 dark:text-gray-400 mt-1">{space.description}</p>
       {/if}
     </div>
+    {#if space?.permission === null}
+      <button
+        onclick={openShareModal}
+        class="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium border border-gray-300 dark:border-gray-600"
+      >
+        Share
+      </button>
+    {/if}
     {#if canCreate()}
       <button
         use:melt={$trigger}
@@ -297,9 +395,7 @@
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Type</th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Version</th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Updated</th>
-            {#if canModify()}
-              <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
-            {/if}
+            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
           </tr>
         </thead>
         <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -317,12 +413,8 @@
                       <span class="text-xs text-gray-500">+{items.length - 3} more</span>
                     {/if}
                   </div>
-                {:else if usesMonaco(entry.value_type)}
-                  <div class="w-64">
-                    <MonacoEditor value={entry.value} language={monacoLang(entry.value_type)} readonly height="80px" />
-                  </div>
                 {:else}
-                  <div class="max-w-xs truncate font-mono" title={entry.value}>{entry.value}</div>
+                  <div class="max-w-xs truncate font-mono text-xs" title={entry.value_type === 'boolean' ? entry.value : undefined}>{entry.value}</div>
                 {/if}
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
@@ -335,6 +427,12 @@
               {#if canModify()}
                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm space-x-3">
                   <button
+                    onclick={() => handleViewEntry(entry)}
+                    class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 font-medium"
+                  >
+                    View
+                  </button>
+                  <button
                     onclick={() => handleEditEntry(entry)}
                     class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 font-medium"
                   >
@@ -345,6 +443,15 @@
                     class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 font-medium"
                   >
                     Delete
+                  </button>
+                </td>
+              {:else}
+                <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                  <button
+                    onclick={() => handleViewEntry(entry)}
+                    class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 font-medium"
+                  >
+                    View
                   </button>
                 </td>
               {/if}
@@ -668,6 +775,161 @@
         class="absolute right-4 top-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
         aria-label="Close"
       >
+        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  {/if}
+</div>
+
+<!-- Share Space Dialog -->
+<div use:melt={$sharePortalled}>
+  {#if $shareOpen}
+    <div use:melt={$shareOverlay} class="fixed inset-0 z-40 bg-black/50"></div>
+    <div
+      use:melt={$shareContent}
+      class="fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-[90vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white dark:bg-gray-800 p-6 shadow-xl overflow-y-auto"
+    >
+      <h2 use:melt={$shareTitle} class="text-xl font-semibold text-gray-900 dark:text-white mb-1">
+        Share "{space?.name}"
+      </h2>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Manage who has access to this space.</p>
+
+      {#if shareError}
+        <div class="mb-3 p-2 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 rounded text-sm">{shareError}</div>
+      {/if}
+
+      <!-- Add share form -->
+      <div class="flex gap-2 mb-4">
+        <div class="relative flex-1">
+          <input
+            type="text"
+            value={shareUsername}
+            oninput={onShareUsernameInput}
+            onblur={() => setTimeout(() => { suggestionsOpen = false; }, 150)}
+            placeholder="Username"
+            autocomplete="off"
+            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+          />
+          {#if suggestionsOpen}
+            <ul class="absolute z-50 left-0 right-0 top-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg overflow-hidden">
+              {#each userSuggestions as suggestion}
+                <li>
+                  <button
+                    type="button"
+                    onmousedown={() => selectSuggestion(suggestion)}
+                    class="w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2"
+                  >
+                    <span class="text-sm font-medium text-gray-900 dark:text-white">{suggestion.username}</span>
+                    {#if suggestion.email}
+                      <span class="text-xs text-gray-400 dark:text-gray-500">{suggestion.email}</span>
+                    {/if}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+        <select
+          bind:value={sharePermission}
+          class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-white"
+        >
+          <option value="readonly">Read only</option>
+          <option value="write">Write</option>
+          <option value="appendonly">Append only</option>
+        </select>
+        <button
+          onclick={handleAddShare}
+          class="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors whitespace-nowrap"
+        >
+          Add
+        </button>
+      </div>
+
+      <!-- Current shares list -->
+      {#if sharesLoading}
+        <div class="text-center py-4 text-gray-500 text-sm">Loading shares…</div>
+      {:else if shares.length === 0}
+        <p class="text-sm text-gray-500 dark:text-gray-400 text-center py-4">No shares yet.</p>
+      {:else}
+        <ul class="space-y-2">
+          {#each shares as share (share.user_id)}
+            <li class="flex items-center justify-between bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded-lg">
+              <span class="text-sm font-medium text-gray-900 dark:text-white">{share.username}</span>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 text-xs rounded-full font-medium {share.permission === 'write' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' : share.permission === 'appendonly' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}">{share.permission}</span>
+                <button
+                  onclick={() => handleRemoveShare(share.user_id)}
+                  class="text-red-500 hover:text-red-700 text-xs"
+                  aria-label="Remove"
+                >✕</button>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
+      <div class="flex justify-end mt-6">
+        <button use:melt={$shareClose}
+          class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+          Close
+        </button>
+      </div>
+
+      <button use:melt={$shareClose} class="absolute right-4 top-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Close">
+        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  {/if}
+</div>
+
+<!-- View Entry Dialog -->
+<div use:melt={$viewPortalled}>
+  {#if $viewOpen && viewingEntry}
+    <div use:melt={$viewOverlay} class="fixed inset-0 z-40 bg-black/50"></div>
+    <div
+      use:melt={$viewContent}
+      class="fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-[90vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white dark:bg-gray-800 p-6 shadow-xl overflow-y-auto"
+    >
+      <h2 use:melt={$viewTitle} class="text-xl font-semibold text-gray-900 dark:text-white mb-1 font-mono">
+        {viewingEntry.key}
+      </h2>
+      <div class="flex items-center gap-2 mb-4">
+        <span class="px-2 py-0.5 text-xs rounded bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300 font-mono">{viewingEntry.value_type}</span>
+        <span class="text-xs text-gray-400">v{viewingEntry.version}</span>
+        {#if viewingEntry.description}
+          <span class="text-xs text-gray-500 dark:text-gray-400">— {viewingEntry.description}</span>
+        {/if}
+      </div>
+
+      <div class="rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600">
+        {#if viewingEntry.value_type === 'list'}
+          <ul class="divide-y divide-gray-100 dark:divide-gray-700">
+            {#each parseListValue(viewingEntry.value) as item, i}
+              <li class="px-4 py-2 text-sm font-mono text-gray-800 dark:text-gray-200 flex items-center gap-3">
+                <span class="text-gray-400 text-xs w-6 shrink-0">{i + 1}</span>
+                {item}
+              </li>
+            {/each}
+          </ul>
+        {:else if usesMonaco(viewingEntry.value_type)}
+          <MonacoEditor value={viewingEntry.value} language={monacoLang(viewingEntry.value_type)} readonly height="400px" />
+        {:else}
+          <pre class="p-4 text-sm font-mono text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-all bg-gray-50 dark:bg-gray-900">{viewingEntry.value}</pre>
+        {/if}
+      </div>
+
+      <div class="flex justify-end mt-6">
+        <button use:melt={$viewClose}
+          class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+          Close
+        </button>
+      </div>
+
+      <button use:melt={$viewClose} class="absolute right-4 top-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Close">
         <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
         </svg>
