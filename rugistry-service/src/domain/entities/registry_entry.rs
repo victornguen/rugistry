@@ -23,6 +23,9 @@ pub enum ValueType {
     Boolean,
     Json,
     List,
+    Hocon,
+    Toml,
+    Yaml,
 }
 
 impl RegistryEntry {

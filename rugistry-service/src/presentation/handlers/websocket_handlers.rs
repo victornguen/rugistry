@@ -6,11 +6,10 @@ use futures::{sink::SinkExt, stream::StreamExt};
 use regex::Regex;
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::application::dto::ChangeNotification;
 use crate::infrastructure::events::EventBus;
+use crate::presentation::routes::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct WebSocketQuery {
@@ -24,12 +23,12 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Path(space_id): Path<Uuid>,
     Query(query): Query<WebSocketQuery>,
-    State(event_bus): State<Arc<EventBus>>,
+    State(state): State<AppState>,
 ) -> Response {
     // Compile regex pattern if provided
     let regex = query.pattern.and_then(|p| Regex::new(&p).ok());
     
-    ws.on_upgrade(move |socket| handle_socket(socket, event_bus, space_id, query.key, regex))
+    ws.on_upgrade(move |socket| handle_socket(socket, state.event_bus, space_id, query.key, regex))
 }
 
 async fn handle_socket(

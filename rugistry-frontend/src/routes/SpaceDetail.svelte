@@ -12,6 +12,9 @@
     type RegistryEntry,
     type CreateEntryRequest 
   } from '../lib/api';
+  import MonacoEditor from '../components/MonacoEditor.svelte';
+
+  type ValueType = 'string' | 'number' | 'boolean' | 'json' | 'list' | 'hocon' | 'toml' | 'yaml';
 
   let { id }: { id: string } = $props();
 
@@ -19,12 +22,14 @@
   let entries: RegistryEntry[] = $state([]);
   let loading = $state(true);
   let error = $state('');
-  let ws: WebSocket | null = $state(null);
+  let formError = $state('');
+  let ws: WebSocket | null = null;
 
   // New entry form
   let newEntryKey = $state('');
   let newEntryValue = $state('');
-  let newEntryValueType = $state<'string' | 'number' | 'boolean' | 'json' | 'list'>('string');
+  let newEntryListItemInput = $state('');
+  let newEntryValueType = $state<ValueType>('string');
   let newEntryDescription = $state('');
   let newEntryListItems = $state<string[]>([]);
 
@@ -32,7 +37,8 @@
   let editingEntry: RegistryEntry | null = $state(null);
   let editEntryKey = $state('');
   let editEntryValue = $state('');
-  let editEntryValueType = $state<'string' | 'number' | 'boolean' | 'json' | 'list'>('string');
+  let editEntryListItemInput = $state('');
+  let editEntryValueType = $state<ValueType>('string');
   let editEntryDescription = $state('');
   let editEntryListItems = $state<string[]>([]);
 
@@ -58,6 +64,41 @@
     states: { open: editOpen }
   } = editDialog;
 
+  // ── Permission helpers ────────────────────────────────────────────────────
+  function canCreate(): boolean {
+    if (!space) return true;
+    return space.permission === null || space.permission === 'write' || space.permission === 'appendonly';
+  }
+  function canModify(): boolean {
+    if (!space) return true;
+    return space.permission === null || space.permission === 'write';
+  }
+  function permissionLabel(): string {
+    if (!space || space.permission === null) return 'owner';
+    return space.permission;
+  }
+  function permissionBadgeClass(): string {
+    if (!space || space.permission === null) return 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300';
+    if (space.permission === 'readonly') return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300';
+    if (space.permission === 'write') return 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300';
+    if (space.permission === 'appendonly') return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300';
+    return 'bg-gray-100 text-gray-600';
+  }
+
+  // ── Monaco language mapping ───────────────────────────────────────────────
+  function monacoLang(vt: string): string {
+    switch (vt) {
+      case 'json': return 'json';
+      case 'yaml': return 'yaml';
+      case 'toml': return 'ini';
+      case 'hocon': return 'hcl';
+      default: return 'plaintext';
+    }
+  }
+  function usesMonaco(vt: string): boolean {
+    return ['json', 'yaml', 'toml', 'hocon'].includes(vt);
+  }
+
   async function loadData() {
     try {
       loading = true;
@@ -77,72 +118,39 @@
 
   function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.hostname}:3000/api/ws/${id}`;
-    
+    const wsUrl = `${protocol}//${window.location.hostname}:3000/api/v1/ws/${id}`;
     ws = new WebSocket(wsUrl);
-    
     ws.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        // Backend sends: { event_type: "created"/"updated"/"deleted", space_id, entry_id, key, entry, timestamp }
         if (message.space_id === id) {
-          if (message.event_type === 'created' && message.entry) {
-            // Add new entry to the list
-            entries = [...entries, message.entry];
-          } else if (message.event_type === 'updated' && message.entry) {
-            // Update existing entry in the list
-            entries = entries.map(e => e.id === message.entry.id ? message.entry : e);
-          } else if (message.event_type === 'deleted' && message.entry_id) {
-            // Remove entry from the list
-            entries = entries.filter(e => e.id !== message.entry_id);
-          }
+          if (message.event_type === 'created' && message.entry) entries = [...entries, message.entry];
+          else if (message.event_type === 'updated' && message.entry) entries = entries.map(e => e.id === message.entry.id ? message.entry : e);
+          else if (message.event_type === 'deleted' && message.entry_id) entries = entries.filter(e => e.id !== message.entry_id);
         }
-      } catch (err) {
-        console.error('WebSocket message error:', err);
-      }
+      } catch {}
     };
-
     ws.onclose = () => {
-      // Reconnect after 3 seconds
-      setTimeout(() => {
-        if (!ws || ws.readyState === WebSocket.CLOSED) {
-          connectWebSocket();
-        }
-      }, 3000);
+      setTimeout(() => { if (!ws || ws.readyState === WebSocket.CLOSED) connectWebSocket(); }, 3000);
     };
   }
 
   async function handleCreateEntry() {
     if (!newEntryKey.trim()) return;
-    
-    // For list type, validate and serialize list items
+    formError = '';
     let finalValue = newEntryValue;
     if (newEntryValueType === 'list') {
-      if (newEntryListItems.length === 0) {
-        error = 'List must have at least one item';
-        return;
-      }
       finalValue = JSON.stringify(newEntryListItems);
     } else if (!finalValue.trim()) {
+      formError = 'Value is required';
       return;
     }
-    
     try {
-      const request: CreateEntryRequest = {
-        key: newEntryKey,
-        value: finalValue,
-        value_type: newEntryValueType,
-        description: newEntryDescription || undefined,
-      };
-      await createEntry(id, request);
+      await createEntry(id, { key: newEntryKey, value: finalValue, value_type: newEntryValueType, description: newEntryDescription || undefined });
       open.set(false);
-      newEntryKey = '';
-      newEntryValue = '';
-      newEntryValueType = 'string';
-      newEntryDescription = '';
-      newEntryListItems = [];
+      newEntryKey = ''; newEntryValue = ''; newEntryValueType = 'string'; newEntryDescription = ''; newEntryListItems = []; newEntryListItemInput = '';
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to create entry';
+      formError = e instanceof Error ? e.message : 'Failed to create entry';
     }
   }
 
@@ -150,85 +158,58 @@
     editingEntry = entry;
     editEntryKey = entry.key;
     editEntryValue = entry.value;
-    editEntryValueType = entry.value_type;
+    editEntryValueType = entry.value_type as ValueType;
     editEntryDescription = entry.description || '';
-    
-    // Parse list items if it's a list type
-    if (entry.value_type === 'list') {
-      try {
-        editEntryListItems = JSON.parse(entry.value);
-      } catch {
-        editEntryListItems = [];
-      }
-    } else {
-      editEntryListItems = [];
-    }
-    
+    editEntryListItems = entry.value_type === 'list' ? (() => { try { return JSON.parse(entry.value); } catch { return []; } })() : [];
+    editEntryListItemInput = '';
+    formError = '';
     editDialog.states.open.set(true);
   }
 
   async function handleUpdateEntry() {
     if (!editingEntry || !editEntryKey.trim()) return;
-    
-    // For list type, validate and serialize list items
+    formError = '';
     let finalValue = editEntryValue;
     if (editEntryValueType === 'list') {
-      if (editEntryListItems.length === 0) {
-        error = 'List must have at least one item';
-        return;
-      }
       finalValue = JSON.stringify(editEntryListItems);
     } else if (!finalValue.trim()) {
+      formError = 'Value is required';
       return;
     }
-    
     try {
-      const updates: Partial<CreateEntryRequest> = {
-        key: editEntryKey,
-        value: finalValue,
-        value_type: editEntryValueType,
-        description: editEntryDescription || undefined,
-      };
-      await updateEntry(id, editingEntry.id, updates);
+      await updateEntry(id, editingEntry.id, { key: editEntryKey, value: finalValue, value_type: editEntryValueType, description: editEntryDescription || undefined });
       editDialog.states.open.set(false);
       editingEntry = null;
       editEntryListItems = [];
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to update entry';
+      formError = e instanceof Error ? e.message : 'Failed to update entry';
     }
   }
 
   // List management helpers for new entry
   function addNewListItem() {
-    if (newEntryValue.trim()) {
-      newEntryListItems = [...newEntryListItems, newEntryValue.trim()];
-      newEntryValue = '';
+    if (newEntryListItemInput.trim()) {
+      newEntryListItems = [...newEntryListItems, newEntryListItemInput.trim()];
+      newEntryListItemInput = '';
     }
   }
-
   function removeNewListItem(index: number) {
     newEntryListItems = newEntryListItems.filter((_, i) => i !== index);
   }
 
   // List management helpers for edit entry
   function addEditListItem() {
-    if (editEntryValue.trim()) {
-      editEntryListItems = [...editEntryListItems, editEntryValue.trim()];
-      editEntryValue = '';
+    if (editEntryListItemInput.trim()) {
+      editEntryListItems = [...editEntryListItems, editEntryListItemInput.trim()];
+      editEntryListItemInput = '';
     }
   }
-
   function removeEditListItem(index: number) {
     editEntryListItems = editEntryListItems.filter((_, i) => i !== index);
   }
 
-  // Helper to safely parse list values
   function parseListValue(value: string): string[] {
-    try {
-      return JSON.parse(value);
-    } catch {
-      return [];
-    }
+    try { return JSON.parse(value); } catch { return []; }
   }
 
   async function handleDeleteEntry(entryId: string) {
@@ -239,10 +220,6 @@
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to delete entry';
     }
-  }
-
-  function goBack() {
-    navigate('/');
   }
 
   onMount(() => {
@@ -260,7 +237,7 @@
 <div class="space-y-6">
   <div class="flex items-center gap-4">
     <button
-      onclick={goBack}
+      onclick={() => navigate('/')}
       aria-label="Go back"
       class="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
     >
@@ -269,19 +246,26 @@
       </svg>
     </button>
     <div class="flex-1">
-      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-        {space?.name ?? 'Loading...'}
-      </h1>
+      <div class="flex items-center gap-2 flex-wrap">
+        <h1 class="text-3xl font-bold text-gray-900 dark:text-white">
+          {space?.name ?? 'Loading...'}
+        </h1>
+        {#if space}
+          <span class="px-2 py-0.5 text-xs rounded-full font-medium {permissionBadgeClass()}">{permissionLabel()}</span>
+        {/if}
+      </div>
       {#if space?.description}
         <p class="text-gray-600 dark:text-gray-400 mt-1">{space.description}</p>
       {/if}
     </div>
-    <button
-      use:melt={$trigger}
-      class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-    >
-      + Add Entry
-    </button>
+    {#if canCreate()}
+      <button
+        use:melt={$trigger}
+        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+      >
+        + Add Entry
+      </button>
+    {/if}
   </div>
 
   {#if error}
@@ -313,7 +297,9 @@
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Type</th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Version</th>
             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Updated</th>
-            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
+            {#if canModify()}
+              <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
+            {/if}
           </tr>
         </thead>
         <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -323,18 +309,20 @@
               <td class="px-6 py-4 text-sm text-gray-600 dark:text-gray-300">
                 {#if entry.value_type === 'list'}
                   {@const items = parseListValue(entry.value)}
-                  <div class="space-y-1">
-                    {#each items as item, i}
-                      {#if i < 3}
-                        <div class="text-xs bg-gray-100 dark:bg-gray-600 px-2 py-1 rounded inline-block mr-1">{item}</div>
-                      {/if}
+                  <div class="flex flex-wrap gap-1">
+                    {#each items.slice(0, 3) as item}
+                      <span class="text-xs bg-gray-100 dark:bg-gray-600 px-2 py-0.5 rounded font-mono">{item}</span>
                     {/each}
                     {#if items.length > 3}
                       <span class="text-xs text-gray-500">+{items.length - 3} more</span>
                     {/if}
                   </div>
+                {:else if usesMonaco(entry.value_type)}
+                  <div class="w-64">
+                    <MonacoEditor value={entry.value} language={monacoLang(entry.value_type)} readonly height="80px" />
+                  </div>
                 {:else}
-                  <div class="max-w-xs truncate" title={entry.value}>{entry.value}</div>
+                  <div class="max-w-xs truncate font-mono" title={entry.value}>{entry.value}</div>
                 {/if}
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
@@ -344,20 +332,22 @@
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                 {new Date(entry.updated_at).toLocaleString()}
               </td>
-              <td class="px-6 py-4 whitespace-nowrap text-right text-sm space-x-3">
-                <button
-                  onclick={() => handleEditEntry(entry)}
-                  class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 font-medium"
-                >
-                  Edit
-                </button>
-                <button
-                  onclick={() => handleDeleteEntry(entry.id)}
-                  class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 font-medium"
-                >
-                  Delete
-                </button>
-              </td>
+              {#if canModify()}
+                <td class="px-6 py-4 whitespace-nowrap text-right text-sm space-x-3">
+                  <button
+                    onclick={() => handleEditEntry(entry)}
+                    class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 font-medium"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onclick={() => handleDeleteEntry(entry.id)}
+                    class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 font-medium"
+                  >
+                    Delete
+                  </button>
+                </td>
+              {/if}
             </tr>
           {/each}
         </tbody>
@@ -372,12 +362,16 @@
     <div use:melt={$overlay} class="fixed inset-0 z-40 bg-black/50"></div>
     <div
       use:melt={$content}
-      class="fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white dark:bg-gray-800 p-6 shadow-xl"
+      class="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[90vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white dark:bg-gray-800 p-6 shadow-xl overflow-y-auto"
     >
       <h2 use:melt={$title} class="text-xl font-semibold text-gray-900 dark:text-white mb-4">
         Add New Entry
       </h2>
-      
+
+      {#if formError}
+        <div class="mb-3 p-2 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 rounded text-sm">{formError}</div>
+      {/if}
+
       <form onsubmit={(e) => { e.preventDefault(); handleCreateEntry(); }}>
         <div class="space-y-4">
           <div>
@@ -407,10 +401,21 @@
               <option value="boolean">Boolean</option>
               <option value="json">JSON</option>
               <option value="list">List</option>
+              <option value="yaml">YAML</option>
+              <option value="toml">TOML</option>
+              <option value="hocon">HOCON</option>
             </select>
           </div>
           
-          {#if newEntryValueType === 'list'}
+          {#if newEntryValueType === 'boolean'}
+            <div>
+              <label for="new-bool-value" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Value *</label>
+              <select id="new-bool-value" bind:value={newEntryValue} class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-white">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </div>
+          {:else if newEntryValueType === 'list'}
             <div>
               <label for="new-list-item" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 List Items *
@@ -420,7 +425,7 @@
                   <input
                     id="new-list-item"
                     type="text"
-                    bind:value={newEntryValue}
+                    bind:value={newEntryListItemInput}
                     placeholder="Enter list item"
                     onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), addNewListItem())}
                     class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
@@ -434,18 +439,12 @@
                   </button>
                 </div>
                 {#if newEntryListItems.length > 0}
-                  <div class="space-y-1 max-h-40 overflow-y-auto">
+                  <div class="flex flex-wrap gap-1">
                     {#each newEntryListItems as item, index}
-                      <div class="flex items-center gap-2 bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded">
-                        <span class="flex-1 text-sm text-gray-900 dark:text-white">{item}</span>
-                        <button
-                          type="button"
-                          onclick={() => removeNewListItem(index)}
-                          class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
-                        >
-                          ×
-                        </button>
-                      </div>
+                      <span class="flex items-center gap-1 px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">
+                        {item}
+                        <button type="button" onclick={() => removeNewListItem(index)} class="text-red-500 hover:text-red-700 ml-1">✕</button>
+                      </span>
                     {/each}
                   </div>
                 {:else}
@@ -453,19 +452,24 @@
                 {/if}
               </div>
             </div>
+          {:else if usesMonaco(newEntryValueType)}
+            <div>
+              <p class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Value *</p>
+              <MonacoEditor bind:value={newEntryValue} language={monacoLang(newEntryValueType)} height="200px" />
+            </div>
           {:else}
             <div>
               <label for="value" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Value *
               </label>
-              <textarea
+              <input
                 id="value"
+                type={newEntryValueType === 'number' ? 'number' : 'text'}
                 bind:value={newEntryValue}
                 placeholder="Enter value"
-                rows="4"
                 required
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm"
-              ></textarea>
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+              />
             </div>
           {/if}
           <div>
@@ -518,12 +522,16 @@
     <div use:melt={$editOverlay} class="fixed inset-0 z-40 bg-black/50"></div>
     <div
       use:melt={$editContent}
-      class="fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white dark:bg-gray-800 p-6 shadow-xl"
+      class="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[90vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white dark:bg-gray-800 p-6 shadow-xl overflow-y-auto"
     >
       <h2 use:melt={$editTitle} class="text-xl font-semibold text-gray-900 dark:text-white mb-4">
         Edit Entry
       </h2>
-      
+
+      {#if formError}
+        <div class="mb-3 p-2 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 rounded text-sm">{formError}</div>
+      {/if}
+
       <form onsubmit={(e) => { e.preventDefault(); handleUpdateEntry(); }}>
         <div class="space-y-4">
           <div>
@@ -553,10 +561,21 @@
               <option value="boolean">Boolean</option>
               <option value="json">JSON</option>
               <option value="list">List</option>
+              <option value="yaml">YAML</option>
+              <option value="toml">TOML</option>
+              <option value="hocon">HOCON</option>
             </select>
           </div>
-          
-          {#if editEntryValueType === 'list'}
+
+          {#if editEntryValueType === 'boolean'}
+            <div>
+              <label for="edit-bool-value" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Value *</label>
+              <select id="edit-bool-value" bind:value={editEntryValue} class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-white">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </div>
+          {:else if editEntryValueType === 'list'}
             <div>
               <label for="edit-list-item" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 List Items *
@@ -566,7 +585,7 @@
                   <input
                     id="edit-list-item"
                     type="text"
-                    bind:value={editEntryValue}
+                    bind:value={editEntryListItemInput}
                     placeholder="Enter list item"
                     onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), addEditListItem())}
                     class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
@@ -580,18 +599,12 @@
                   </button>
                 </div>
                 {#if editEntryListItems.length > 0}
-                  <div class="space-y-1 max-h-40 overflow-y-auto">
+                  <div class="flex flex-wrap gap-1">
                     {#each editEntryListItems as item, index}
-                      <div class="flex items-center gap-2 bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded">
-                        <span class="flex-1 text-sm text-gray-900 dark:text-white">{item}</span>
-                        <button
-                          type="button"
-                          onclick={() => removeEditListItem(index)}
-                          class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
-                        >
-                          ×
-                        </button>
-                      </div>
+                      <span class="flex items-center gap-1 px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">
+                        {item}
+                        <button type="button" onclick={() => removeEditListItem(index)} class="text-red-500 hover:text-red-700 ml-1">✕</button>
+                      </span>
                     {/each}
                   </div>
                 {:else}
@@ -599,19 +612,24 @@
                 {/if}
               </div>
             </div>
+          {:else if usesMonaco(editEntryValueType)}
+            <div>
+              <p class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Value *</p>
+              <MonacoEditor bind:value={editEntryValue} language={monacoLang(editEntryValueType)} height="200px" />
+            </div>
           {:else}
             <div>
               <label for="edit-value" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Value *
               </label>
-              <textarea
+              <input
                 id="edit-value"
+                type={editEntryValueType === 'number' ? 'number' : 'text'}
                 bind:value={editEntryValue}
                 placeholder="Enter value"
-                rows="4"
                 required
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm"
-              ></textarea>
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+              />
             </div>
           {/if}
           <div>

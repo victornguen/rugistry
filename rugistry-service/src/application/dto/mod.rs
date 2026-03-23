@@ -21,8 +21,25 @@ pub struct SpaceResponse {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
+    pub owner_id: Option<Uuid>,
+    /// null = current user is owner; "readonly"/"write"/"appendonly" = shared access
+    pub permission: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ShareSpaceRequest {
+    pub username: String,
+    pub permission: String, // "readonly", "write", "appendonly"
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SpaceShareResponse {
+    pub user_id: String,
+    pub username: String,
+    pub permission: String,
+    pub created_at: String,
 }
 
 // Registry Entry DTOs
@@ -73,3 +90,4 @@ pub enum ChangeEventType {
     Updated,
     Deleted,
 }
+

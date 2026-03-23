@@ -125,6 +125,9 @@ fn value_type_to_string(value_type: &ValueType) -> &str {
         ValueType::Boolean => "boolean",
         ValueType::Json => "json",
         ValueType::List => "list",
+        ValueType::Hocon => "hocon",
+        ValueType::Toml => "toml",
+        ValueType::Yaml => "yaml",
     }
 }
 
@@ -135,6 +138,9 @@ fn string_to_value_type(s: &str) -> ValueType {
         "boolean" => ValueType::Boolean,
         "json" => ValueType::Json,
         "list" => ValueType::List,
+        "hocon" => ValueType::Hocon,
+        "toml" => ValueType::Toml,
+        "yaml" => ValueType::Yaml,
         _ => ValueType::String,
     }
 }

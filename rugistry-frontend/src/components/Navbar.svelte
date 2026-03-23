@@ -1,9 +1,15 @@
 <script lang="ts">
   import { navigate } from 'svelte-routing';
+  import { authState, logout } from '../lib/auth';
   
   function handleHomeClick(e: MouseEvent) {
     e.preventDefault();
     navigate('/');
+  }
+
+  function handleLogout() {
+    logout();
+    navigate('/login');
   }
 </script>
 
@@ -26,6 +32,20 @@
         >
           Spaces
         </a>
+        
+        {#if $authState.authenticated}
+          <div class="flex items-center space-x-3">
+            <span class="text-sm text-gray-700 dark:text-gray-300">
+              {$authState.username}
+            </span>
+            <button
+              onclick={handleLogout}
+              class="px-3 py-2 rounded-md text-sm font-medium text-white bg-red-600 hover:bg-red-700 transition-colors"
+            >
+              Logout
+            </button>
+          </div>
+        {/if}
       </div>
     </div>
   </div>

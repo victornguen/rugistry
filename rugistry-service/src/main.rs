@@ -6,6 +6,7 @@ mod presentation;
 use std::sync::Arc;
 
 use infrastructure::{
+    auth::AuthConfig,
     database::{init_database, registry_repository::PostgresRegistryRepository, space_repository::PostgresSpaceRepository},
     events::EventBus,
 };
@@ -21,6 +22,11 @@ async fn main() -> anyhow::Result<()> {
     // Load environment variables
     dotenvy::dotenv().ok();
 
+    // Initialize auth config and fetch JWKS
+    let auth_config = AuthConfig::from_env();
+    tracing::info!("Authentication initialized");
+    let auth_config = Arc::new(auth_config);
+
     // Get database URL
     let database_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set");
@@ -31,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create repositories
     let space_repo = Arc::new(PostgresSpaceRepository::new(pool.clone()));
-    let registry_repo = Arc::new(PostgresRegistryRepository::new(pool));
+    let registry_repo = Arc::new(PostgresRegistryRepository::new(pool.clone()));
 
     // Create event bus
     let event_bus = Arc::new(EventBus::new(100));
@@ -41,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     let registry_service = Arc::new(RegistryService::new(registry_repo, event_bus.clone()));
 
     // Create router with CORS
-    let app = create_router(space_service, registry_service, event_bus)
+    let app = create_router(pool, space_service, registry_service, event_bus, auth_config)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

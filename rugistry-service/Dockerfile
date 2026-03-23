@@ -10,7 +10,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
 
-# Build the application
+# Build the application with offline mode for SQLx
+ENV SQLX_OFFLINE=true
 RUN cargo build --release
 
 # Runtime stage

@@ -9,17 +9,19 @@ pub struct Space {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
+    pub owner_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 impl Space {
-    pub fn new(name: String, description: Option<String>) -> Self {
+    pub fn new(name: String, description: Option<String>, owner_id: Option<Uuid>) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             name,
             description,
+            owner_id,
             created_at: now,
             updated_at: now,
         }
